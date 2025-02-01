@@ -227,13 +227,30 @@ async function removeLiquidity(privateKey) {
     web3.eth.accounts.wallet.add(account);
 
     const router = new web3.eth.Contract(citeaRouterABI, citeaContractAddress);
+    const factory = new web3.eth.Contract(citeaFactoryABI, citeaFactoryAddress);
     const citeaLpContract = new web3.eth.Contract(citeaLpABI, citeaLpContractAddress);
 
     const liquidityBalance = await citeaLpContract.methods.balanceOf(account.address).call();
-    const liquidityAmount = (BigInt(liquidityBalance) * BigInt(5)) / BigInt(100);
+    const liquidityAmount = (BigInt(liquidityBalance) * BigInt(25)) / BigInt(100);
 
-    const minWsfi = "0";
-    const minUsdc = "0";
+    const poolAddress = await factory.methods.getPair(wsfiContractAddress, usdcContractAddress).call();
+    if (poolAddress === "0x0000000000000000000000000000000000000000") {
+      throw new Error("Pool does not exist for the given token pair.");
+    }
+
+    const poolContract = new web3.eth.Contract(citeaLpABI, citeaLpContractAddress);
+    const reserves = await poolContract.methods.getReserves().call();
+    const reserveWsfi = reserves[0];
+    const reserveUsdc = reserves[1];
+
+    const totalSupply = await citeaLpContract.methods.totalSupply().call();
+    const amountWsfiExpected = (liquidityAmount * BigInt(reserveWsfi)) / BigInt(totalSupply);
+    const amountUsdcExpected = (liquidityAmount * BigInt(reserveUsdc)) / BigInt(totalSupply);
+
+    const slippageTolerance = 0.05;
+    const minWsfi = (amountWsfiExpected * BigInt(95)) / BigInt(100);
+    const minUsdc = (amountUsdcExpected * BigInt(95)) / BigInt(100);
+
     const deadline = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
 
     const allowanceLiquidity = await citeaLpContract.methods.allowance(account.address, citeaContractAddress).call();
@@ -256,7 +273,7 @@ async function removeLiquidity(privateKey) {
       await web3.eth.sendSignedTransaction(signedApproveLiquidityTx.rawTransaction);
     }
 
-    const removeLiquidityTx = router.methods.removeLiquidity(wsfiContractAddress, usdcContractAddress, liquidityAmount.toString(), minWsfi, minUsdc, account.address, deadline);
+    const removeLiquidityTx = router.methods.removeLiquidity(wsfiContractAddress, usdcContractAddress, liquidityAmount.toString(), minWsfi.toString(), minUsdc.toString(), account.address, deadline);
     const gasLimit = await removeLiquidityTx.estimateGas({ from: account.address });
     const gasPrice = await web3.eth.getGasPrice();
 
